@@ -84,7 +84,7 @@ https://www.youtube.com/live/yyyyy
 ```bash
 ./restart-kiosk.sh
 # or
-sudo pkill X
+sudo systemctl restart kiosk.service
 ```
 
 **View logs:**

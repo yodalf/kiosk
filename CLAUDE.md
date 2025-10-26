@@ -69,8 +69,8 @@ echo "# 5" > ~/kiosk.url  # Rotate every 5 minutes
 
 ### System service management
 ```bash
-# Restart kiosk (kills X, which auto-restarts via autologin)
-sudo pkill X
+# Restart kiosk using systemctl
+sudo systemctl restart kiosk.service
 
 # Or use the restart script
 ./restart-kiosk.sh
