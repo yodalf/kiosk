@@ -1,0 +1,14 @@
+!/bin/bash
+xset -dpms      # Disable DPMS (Energy Star) features
+xset s off      # Disable screen saver
+xset s noblank  # Don't blank the video device
+unclutter &     # Hide mouse cursor (install with: sudo apt install unclutter)
+
+#chromium-browser --noerrdialogs --disable-infobars --kiosk 'http://your-url-here'
+
+while true; do
+	mpv --fullscreen --ytdl-format=best --no-osc --really-quiet --no-border  "https://www.youtube.com/watch?v=AeMUdOPFcXI"
+	sleep 1
+done
+
+#mpv --fullscreen --ytdl-format=best --no-osc --really-quiet --no-border  "https://www.youtube.com/watch?v=ME0dPuBtzug"

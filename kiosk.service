@@ -1,0 +1,19 @@
+[Unit]
+Description=Kiosk X Session
+After=multi-user.target
+
+[Service]
+Type=simple
+User=realo
+Environment=XDG_SESSION_TYPE=x11
+ExecStart=/usr/bin/startx /home/realo/kiosk.sh -- :0 -nolisten tcp
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+TTYPath=/dev/tty7
+TTYReset=yes
+TTYVHangup=yes
+
+[Install]
+WantedBy=graphical.target
