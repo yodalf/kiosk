@@ -2,6 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Workflow Preferences
+
+**IMPORTANT: Git Commit and Push Policy**
+- NEVER automatically commit and push changes without explicit user instruction
+- Always wait for the user to say "commit and push" or similar explicit instruction
+- After making changes, show what was done and wait for approval to commit
+- This preference applies to all sessions and all changes
+
 ## Project Overview
 
 This is a video kiosk system designed for Raspberry Pi (though can run on other Linux systems). It creates a fullscreen video player that automatically plays and rotates through YouTube live streams or videos. The system uses mpv as the video player with IPC (Inter-Process Communication) for smooth transitions between videos without black screens.
