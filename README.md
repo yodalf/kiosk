@@ -28,6 +28,8 @@ A fullscreen video kiosk system designed for Raspberry Pi that automatically pla
 
 ### Installation
 
+**Note:** The setup script must be run from within a cloned copy of this repository, as it copies the kiosk scripts from the repo to your home directory.
+
 1. Clone this repository:
 ```bash
 git clone https://github.com/yodalf/kiosk.git
@@ -41,7 +43,8 @@ cd kiosk
 
 The setup script will:
 - Install required dependencies (mpv, yt-dlp, xorg, unclutter, socat)
-- Create necessary scripts in your home directory
+- Copy `kiosk.sh` and `kiosk-monitor.sh` from the repository to your home directory
+- Create a default `kiosk.url` file if one doesn't exist
 - Configure autologin on tty1
 - Set up systemd services for monitoring
 
@@ -122,8 +125,9 @@ Edit `kiosk.sh` to change which playlist is active by modifying the `URL_FILE` v
 
 **kiosk-setup.sh** - One-time setup script
 - Installs all dependencies
+- Copies kiosk scripts from repository to home directory
 - Configures autologin and systemd services
-- Creates necessary scripts and directories
+- Creates default URL file if needed
 
 **kiosk-monitor.sh** - Watchdog service
 - Monitors X server process
@@ -181,23 +185,44 @@ sudo journalctl -f
 
 ## Development
 
-### Testing Changes
+### Making Changes
 
-Test the kiosk script directly (requires X session):
+The setup script copies files from the repository to your home directory. If you want to modify the kiosk behavior:
+
+**Option 1: Test changes directly in home directory**
 ```bash
-./kiosk.sh
+# Edit the installed script
+nano ~/kiosk.sh
+
+# Test it (requires X session)
+~/kiosk.sh
 ```
+
+**Option 2: Modify in repo and re-copy**
+```bash
+# Edit in the repository
+cd /path/to/kiosk
+nano kiosk.sh
+
+# Copy to home directory
+cp kiosk.sh ~/kiosk.sh
+
+# Or re-run setup (will preserve existing kiosk.url)
+./kiosk-setup.sh
+```
+
+### Testing Changes
 
 Create a test URL file with short rotation for development:
 ```bash
-cat > test.url << EOF
+cat > ~/test.url << EOF
 # 0.1
 https://www.youtube.com/live/test1
 https://www.youtube.com/live/test2
 EOF
 ```
 
-Edit `kiosk.sh` to use the test file and run.
+Edit `~/kiosk.sh` to change `URL_FILE` to point to `test.url`, then run `~/kiosk.sh`.
 
 ### Log Rotation
 
