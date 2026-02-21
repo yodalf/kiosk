@@ -11,26 +11,24 @@ A fullscreen video kiosk system designed for Raspberry Pi that automatically pla
 - **Live URL Updates**: Automatically detects and applies changes to video lists without restart
 - **Lightweight**: Minimal resource usage, optimized for Raspberry Pi
 - **Auto-Login**: Boots directly into kiosk mode on startup
+- **One-Command Setup**: Single script goes from fresh Raspberry Pi OS to working kiosk
 
 ## Requirements
 
 ### Hardware
-- Raspberry Pi (any model with video output)
+- Raspberry Pi (tested on Pi 5, should work on any model with video output)
 - Display connected via HDMI
 - Internet connection
 
 ### Software
-- Raspberry Pi OS (Debian-based Linux)
-- Systemd for service management
-- X11 display server
+- Raspberry Pi OS Bookworm (Debian-based Linux)
+- Network configured (via Raspberry Pi Imager or manual setup)
 
 ## Quick Start
 
 ### Installation
 
-**Note:** The setup script must be run from within a cloned copy of this repository, as it copies the kiosk scripts from the repo to your home directory.
-
-1. Clone this repository:
+1. Clone this repository on the Pi:
 ```bash
 git clone https://github.com/yodalf/kiosk.git
 cd kiosk
@@ -42,11 +40,12 @@ cd kiosk
 ```
 
 The setup script will:
-- Install required dependencies (mpv, yt-dlp, xorg, unclutter, socat)
-- Copy `kiosk.sh` and `kiosk-monitor.sh` from the repository to your home directory
-- Create a default `kiosk.url` file if one doesn't exist
+- Install required dependencies (mpv, yt-dlp, xorg, xinit, unclutter, socat)
+- Copy all scripts and URL files to your home directory
+- Generate the X server wrapper (`kiosk-with-x.sh`)
+- Prompt you to select a playlist (from available `.url` files)
+- Install and enable the `kiosk.service` systemd service
 - Configure autologin on tty1
-- Set up systemd services for monitoring
 
 3. Reboot to start the kiosk:
 ```bash
@@ -55,7 +54,7 @@ sudo reboot
 
 ### Configuration
 
-Edit the URL file to add your YouTube videos:
+Edit the URL file to change your video playlist:
 ```bash
 nano ~/kiosk.url
 ```
@@ -95,7 +94,6 @@ tail -f /tmp/kiosk.log
 **Check service status:**
 ```bash
 systemctl status kiosk.service
-systemctl status kiosk-monitor.service
 ```
 
 **Enable/disable auto-start:**
@@ -106,33 +104,40 @@ sudo systemctl disable kiosk.service  # Disable auto-start
 
 ### Multiple Playlists
 
-You can create different URL files for different purposes:
-- `africa.url` - African news streams
-- `world.url` - World news streams
-- `kiosk.url` - Default playlist
+The setup script copies all `.url` files from the repo and lets you choose which one to use. The selected file is symlinked as `kiosk.url`:
 
-Edit `kiosk.sh` to change which playlist is active by modifying the `URL_FILE` variable.
+- `africa.url` - African wildlife camera streams
+- `world.url` - World news streams
+
+To switch playlists after setup:
+```bash
+rm ~/kiosk.url
+ln -s ~/africa.url ~/kiosk.url
+sudo systemctl restart kiosk.service
+```
 
 ## Architecture
 
 ### Core Components
 
-**kiosk.sh** - Main kiosk script
-- Runs mpv in IPC mode with socket communication
-- Implements shuffle algorithm for fair video rotation
-- Monitors for URL file changes
-- Logs to `/tmp/kiosk.log` with automatic rotation at 1MB
+| File | Description |
+|------|-------------|
+| `kiosk.sh` | Main kiosk script - runs mpv in IPC mode, manages shuffle rotation |
+| `kiosk-setup.sh` | One-time setup script - installs everything from a fresh Pi OS |
+| `kiosk-with-x.sh` | X server wrapper - bridges systemd service to startx |
+| `kiosk-monitor.sh` | Watchdog - restarts getty if X crashes (optional) |
+| `restart-kiosk.sh` | Convenience script - restarts the kiosk service |
+| `kiosk.service` | Systemd service template (USERNAME placeholder) |
+| `kiosk-monitor.service` | Watchdog service template (USERNAME placeholder) |
 
-**kiosk-setup.sh** - One-time setup script
-- Installs all dependencies
-- Copies kiosk scripts from repository to home directory
-- Configures autologin and systemd services
-- Creates default URL file if needed
+### How It Works
 
-**kiosk-monitor.sh** - Watchdog service
-- Monitors X server process
-- Automatically restarts getty if X crashes
-- Ensures kiosk stays running 24/7
+1. On boot, systemd starts `kiosk.service`
+2. The service runs `kiosk-with-x.sh`, which starts X on tty1
+3. X runs `kiosk.sh` as the window manager
+4. `kiosk.sh` launches mpv in IPC mode and loads the first URL from the shuffled playlist
+5. Every N minutes, it sends a `loadfile` command via the mpv socket for a smooth transition
+6. When all URLs have played, the playlist reshuffles
 
 ### Video Rotation Logic
 
@@ -142,107 +147,76 @@ The kiosk uses an intelligent shuffle system:
 3. Plays all URLs once before reshuffling (no immediate repeats)
 4. Detects URL file changes and regenerates shuffle automatically
 
-### Systemd Services
-
-**kiosk.service** - Runs X session with kiosk on tty7
-
-**kiosk-monitor.service** - Monitors X process and restarts on crash
-
 ## Troubleshooting
 
 ### Kiosk not starting after reboot
-Check if services are enabled:
 ```bash
 systemctl status kiosk.service
-sudo journalctl -u kiosk.service -f
+sudo journalctl -u kiosk.service -n 50
 ```
 
 ### Videos not playing
 1. Check internet connection
 2. Verify URLs are valid YouTube links
-3. Check mpv and yt-dlp are installed:
-```bash
-which mpv yt-dlp
-```
+3. Check mpv and yt-dlp are installed: `which mpv yt-dlp`
 
 ### Black screen or display issues
 Check X server logs:
 ```bash
-cat ~/.local/share/xorg/Xorg.0.log
+cat ~/.local/share/xorg/Xorg.0.log | grep -E '(EE|WW)'
 ```
 
-### Monitor logs
+### View logs
 ```bash
 # Kiosk logs
 tail -f /tmp/kiosk.log
 
-# Monitor service logs
-sudo tail -f /var/log/kiosk-monitor.log
-
-# System logs
-sudo journalctl -f
+# System logs for kiosk service
+sudo journalctl -u kiosk.service -f
 ```
 
 ## Development
 
 ### Making Changes
 
-The setup script copies files from the repository to your home directory. If you want to modify the kiosk behavior:
+The setup script copies files from the repository to your home directory. To modify the kiosk:
 
-**Option 1: Test changes directly in home directory**
+**Option 1: Edit directly on the Pi**
 ```bash
-# Edit the installed script
 nano ~/kiosk.sh
-
-# Test it (requires X session)
-~/kiosk.sh
+sudo systemctl restart kiosk.service
 ```
 
-**Option 2: Modify in repo and re-copy**
+**Option 2: Edit in repo and re-run setup**
 ```bash
-# Edit in the repository
 cd /path/to/kiosk
 nano kiosk.sh
-
-# Copy to home directory
-cp kiosk.sh ~/kiosk.sh
-
-# Or re-run setup (will preserve existing kiosk.url)
-./kiosk-setup.sh
+./kiosk-setup.sh   # Safe to re-run (idempotent)
+sudo systemctl restart kiosk.service
 ```
 
 ### Testing Changes
 
-Create a test URL file with short rotation for development:
+Create a test URL file with short rotation:
 ```bash
 cat > ~/test.url << EOF
 # 0.1
 https://www.youtube.com/live/test1
 https://www.youtube.com/live/test2
 EOF
+rm ~/kiosk.url && ln -s ~/test.url ~/kiosk.url
+sudo systemctl restart kiosk.service
 ```
-
-Edit `~/kiosk.sh` to change `URL_FILE` to point to `test.url`, then run `~/kiosk.sh`.
-
-### Log Rotation
-
-- Log file: `/tmp/kiosk.log`
-- Automatically rotates when exceeds 1MB
-- Old log saved as `/tmp/kiosk.log.old`
 
 ## Platform Compatibility
 
-- Designed for Raspberry Pi OS (Debian-based)
-- Compatible with other Linux distributions using systemd
+- Designed for Raspberry Pi OS Bookworm (Debian-based, arm64)
+- Compatible with other Linux distributions using systemd and X11
 - Uses platform-aware `stat` commands (supports both Linux and BSD/macOS)
 
 ## License
 
 This project is provided as-is for personal and commercial use.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit issues or pull requests.
 
 ## Credits
 

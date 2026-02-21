@@ -1,19 +1,21 @@
 [Unit]
-Description=Kiosk X Session
-After=multi-user.target
+Description=Kiosk Mode for YouTube Streams
+After=multi-user.target network-online.target
+Wants=network-online.target
+Conflicts=getty@tty1.service
 
 [Service]
-Type=simple
-User=realo
-Environment=XDG_SESSION_TYPE=x11
-ExecStart=/usr/bin/startx /home/realo/kiosk.sh -- :0 -nolisten tcp
-Restart=always
-RestartSec=3
-StandardOutput=journal
-StandardError=journal
-TTYPath=/dev/tty7
+Type=idle
+User=USERNAME
+TTYPath=/dev/tty1
 TTYReset=yes
 TTYVHangup=yes
+StandardInput=tty
+StandardOutput=tty
+ExecStartPre=/bin/sleep 5
+ExecStart=/home/USERNAME/kiosk-with-x.sh
+Restart=on-failure
+RestartSec=10
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target

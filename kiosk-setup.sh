@@ -1,170 +1,198 @@
 #!/bin/bash
 # Kiosk Setup Script
-# Automatically sets up a full-screen video kiosk on Raspberry Pi
+# Sets up a fullscreen video kiosk on Raspberry Pi OS (Bookworm).
+# Run on a fresh install with network already configured.
+#
 # Usage: ./kiosk-setup.sh
+# Do NOT run as root.
 
-set -e  # Exit on error
+set -e
+
+# ─── Preflight Checks ──────────────────────────────────────────────────────
+
+if [ "$EUID" -eq 0 ]; then
+    echo "Error: Do not run this script as root."
+    echo "Usage: ./kiosk-setup.sh"
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+USER_HOME="$HOME"
+USERNAME="$(whoami)"
 
 echo "=========================================="
 echo "Kiosk Setup Script"
 echo "=========================================="
 echo ""
+echo "User:  $USERNAME"
+echo "Home:  $USER_HOME"
+echo "Repo:  $SCRIPT_DIR"
+echo ""
 
-# Check if running as root
-if [ "$EUID" -eq 0 ]; then
-   echo "Error: Please do not run this script as root"
-   echo "Usage: ./kiosk-setup.sh"
-   exit 1
-fi
-
-# Get the directory where this script is located
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-USER_HOME="$HOME"
-USERNAME="$(whoami)"
+# ─── Install Packages ──────────────────────────────────────────────────────
 
 echo "Installing required packages..."
 sudo apt-get update -qq
 sudo apt-get install -y unclutter socat mpv yt-dlp xorg xinit
-
 echo ""
-echo "Copying kiosk.sh script from repository..."
 
-# Copy the main kiosk script from repo
-if [ -f "$SCRIPT_DIR/kiosk.sh" ]; then
-	cp "$SCRIPT_DIR/kiosk.sh" "$USER_HOME/kiosk.sh"
-	chmod +x "$USER_HOME/kiosk.sh"
-	echo "Copied: $USER_HOME/kiosk.sh"
-else
-	echo "Error: kiosk.sh not found in repository directory"
-	exit 1
-fi
+# ─── Copy Scripts ───────────────────────────────────────────────────────────
 
+echo "Copying scripts to $USER_HOME..."
+
+for script in kiosk.sh kiosk-monitor.sh restart-kiosk.sh; do
+    if [ -f "$SCRIPT_DIR/$script" ]; then
+        cp "$SCRIPT_DIR/$script" "$USER_HOME/$script"
+        chmod +x "$USER_HOME/$script"
+        echo "  Copied: $script"
+    else
+        echo "  Error: $script not found in repo"
+        exit 1
+    fi
+done
+
+# Copy all .url files from repo
+for url_file in "$SCRIPT_DIR"/*.url; do
+    if [ -f "$url_file" ]; then
+        cp "$url_file" "$USER_HOME/$(basename "$url_file")"
+        echo "  Copied: $(basename "$url_file")"
+    fi
+done
 echo ""
-echo "Creating default kiosk.url file..."
 
-# Create default URL file if it doesn't exist
-if [ ! -f "$USER_HOME/kiosk.url" ]; then
-	cat > "$USER_HOME/kiosk.url" << 'URL_FILE_EOF'
+# ─── Generate kiosk-with-x.sh ──────────────────────────────────────────────
+
+echo "Generating kiosk-with-x.sh..."
+cat > "$USER_HOME/kiosk-with-x.sh" << EOF
+#!/bin/bash
+startx /home/$USERNAME/kiosk.sh -- :0 vt1
+EOF
+chmod +x "$USER_HOME/kiosk-with-x.sh"
+echo "  Created: $USER_HOME/kiosk-with-x.sh"
+echo ""
+
+# ─── Select URL File ───────────────────────────────────────────────────────
+
+echo "Available URL files:"
+URL_FILES=()
+i=1
+for url_file in "$USER_HOME"/*.url; do
+    if [ -f "$url_file" ]; then
+        name=$(basename "$url_file")
+        URL_FILES+=("$name")
+        url_count=$(grep -v '^[[:space:]]*$' "$url_file" | grep -vc '^#' || true)
+        echo "  $i) $name ($url_count URLs)"
+        i=$((i + 1))
+    fi
+done
+echo ""
+
+if [ ${#URL_FILES[@]} -eq 0 ]; then
+    echo "No .url files found. Creating default kiosk.url..."
+    cat > "$USER_HOME/kiosk.url" << 'EOF'
+# 1
 https://www.youtube.com/watch?v=AeMUdOPFcXI
-https://www.youtube.com/live/ydYDqZQpim8?si=WUlVMVqe0pC16Gc0
-URL_FILE_EOF
-	echo "Created: $USER_HOME/kiosk.url"
+EOF
+    echo "  Created: kiosk.url with default URL"
 else
-	echo "kiosk.url already exists, skipping..."
+    SELECTED=""
+    while [ -z "$SELECTED" ]; do
+        read -p "Select URL file to use as kiosk.url [1-${#URL_FILES[@]}]: " choice
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#URL_FILES[@]} ]; then
+            SELECTED="${URL_FILES[$((choice - 1))]}"
+        else
+            echo "  Invalid choice. Enter a number between 1 and ${#URL_FILES[@]}."
+        fi
+    done
+
+    if [ "$SELECTED" = "kiosk.url" ]; then
+        echo "  Using existing kiosk.url"
+    else
+        rm -f "$USER_HOME/kiosk.url"
+        ln -s "$USER_HOME/$SELECTED" "$USER_HOME/kiosk.url"
+        echo "  Linked: kiosk.url -> $SELECTED"
+    fi
 fi
-
 echo ""
-echo "Copying kiosk monitor script from repository..."
 
-# Copy the monitor script from repo
-if [ -f "$SCRIPT_DIR/kiosk-monitor.sh" ]; then
-	cp "$SCRIPT_DIR/kiosk-monitor.sh" "$USER_HOME/kiosk-monitor.sh"
-	chmod +x "$USER_HOME/kiosk-monitor.sh"
-	echo "Copied: $USER_HOME/kiosk-monitor.sh"
-else
-	echo "Error: kiosk-monitor.sh not found in repository directory"
-	exit 1
-fi
+# ─── Install Systemd Services ──────────────────────────────────────────────
 
+echo "Installing systemd services..."
+
+sed "s|USERNAME|$USERNAME|g" "$SCRIPT_DIR/kiosk.service" \
+    | sudo tee /etc/systemd/system/kiosk.service > /dev/null
+echo "  Installed: kiosk.service"
+
+sed "s|USERNAME|$USERNAME|g" "$SCRIPT_DIR/kiosk-monitor.service" \
+    | sudo tee /etc/systemd/system/kiosk-monitor.service > /dev/null
+echo "  Installed: kiosk-monitor.service (not enabled)"
 echo ""
-echo "Creating systemd service for kiosk monitor..."
 
-# Create systemd service
-sudo tee /etc/systemd/system/kiosk-monitor.service > /dev/null << SERVICE_EOF
-[Unit]
-Description=Kiosk Monitor - Restart X on crash
-After=getty@tty1.service
+# ─── Configure Autologin ───────────────────────────────────────────────────
 
-[Service]
-Type=simple
-ExecStart=$USER_HOME/kiosk-monitor.sh
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-SERVICE_EOF
-
-echo "Created: /etc/systemd/system/kiosk-monitor.service"
-
-echo ""
-echo "Configuring autologin for $USERNAME on tty1..."
-
-# Create autologin configuration
+echo "Configuring autologin on tty1..."
 sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
-sudo tee /etc/systemd/system/getty@tty1.service.d/autologin.conf > /dev/null << AUTOLOGIN_EOF
+sudo tee /etc/systemd/system/getty@tty1.service.d/autologin.conf > /dev/null << EOF
 [Service]
 ExecStart=
 ExecStart=-/sbin/agetty --autologin $USERNAME --noclear %I \$TERM
-AUTOLOGIN_EOF
-
-echo "Created: /etc/systemd/system/getty@tty1.service.d/autologin.conf"
-
+Type=idle
+EOF
+echo "  Created: autologin.conf"
 echo ""
-echo "Configuring user profile to start X automatically..."
 
-# Backup existing profile if it exists
-if [ -f "$USER_HOME/.profile" ]; then
-	cp "$USER_HOME/.profile" "$USER_HOME/.profile.backup.$(date +%Y%m%d%H%M%S)"
-fi
+# ─── Configure .bash_profile Fallback ───────────────────────────────────────
 
-# Check if startx command already exists in profile
-if ! grep -q "startx.*kiosk.sh" "$USER_HOME/.profile" 2>/dev/null; then
-	# Add startx to profile
-	cat >> "$USER_HOME/.profile" << 'PROFILE_EOF'
+KIOSK_MARKER="# Auto-start X with kiosk on tty1"
+BASH_PROFILE="$USER_HOME/.bash_profile"
 
-# Auto-start X with kiosk on tty1
-if [ -z "$DISPLAY" ] && [ $(tty) = /dev/tty1 ]; then
-    startx /home/USERNAMEPLACEHOLDER/kiosk.sh
-fi
-PROFILE_EOF
-
-	# Replace placeholder with actual username
-	sed -i "s|USERNAMEPLACEHOLDER|$USERNAME|g" "$USER_HOME/.profile"
-	echo "Updated: $USER_HOME/.profile"
+if grep -q "$KIOSK_MARKER" "$BASH_PROFILE" 2>/dev/null; then
+    echo ".bash_profile already configured, skipping."
 else
-	echo ".profile already configured for kiosk, skipping..."
+    echo "Adding fallback block to .bash_profile..."
+    cat >> "$BASH_PROFILE" << EOF
+
+$KIOSK_MARKER
+if [ -z "\$DISPLAY" ] && [ \$(tty) = /dev/tty1 ]; then
+    #startx /home/$USERNAME/kiosk.sh
+    true
 fi
-
+EOF
+    echo "  Updated: .bash_profile"
+fi
 echo ""
-echo "Enabling and starting kiosk monitor service..."
 
-# Reload systemd, enable and start the monitor service
+# ─── Enable Services ───────────────────────────────────────────────────────
+
+echo "Enabling kiosk service..."
 sudo systemctl daemon-reload
-sudo systemctl enable kiosk-monitor.service
-sudo systemctl start kiosk-monitor.service
-
+sudo systemctl enable kiosk.service
 echo ""
+
+# ─── Summary ────────────────────────────────────────────────────────────────
+
 echo "=========================================="
 echo "Kiosk Setup Complete!"
 echo "=========================================="
 echo ""
-echo "Files created:"
-echo "  - $USER_HOME/kiosk.sh (copied from repository)"
-echo "  - $USER_HOME/kiosk.url (URL list - edit this to change videos)"
-echo "  - $USER_HOME/kiosk-monitor.sh (copied from repository)"
-echo "  - /etc/systemd/system/kiosk-monitor.service"
-echo "  - /etc/systemd/system/getty@tty1.service.d/autologin.conf"
+echo "Installed files:"
+echo "  $USER_HOME/kiosk.sh"
+echo "  $USER_HOME/kiosk-with-x.sh"
+echo "  $USER_HOME/kiosk-monitor.sh"
+echo "  $USER_HOME/restart-kiosk.sh"
+if [ -L "$USER_HOME/kiosk.url" ]; then
+    echo "  $USER_HOME/kiosk.url -> $(readlink "$USER_HOME/kiosk.url")"
+else
+    echo "  $USER_HOME/kiosk.url"
+fi
 echo ""
-echo "Features:"
-echo "  ✓ Auto-login on tty1"
-echo "  ✓ Auto-start X with kiosk"
-echo "  ✓ Auto-restart on crash"
-echo "  ✓ Smart shuffle rotation (plays all URLs before repeating)"
-echo "  ✓ Smooth video transitions via mpv IPC"
-echo "  ✓ Configurable rotation intervals (default 1 minute)"
-echo "  ✓ Automatic log rotation at 1MB"
+echo "Systemd services:"
+echo "  kiosk.service          (enabled, starts on boot)"
+echo "  kiosk-monitor.service  (installed, not enabled)"
 echo ""
-echo "Usage:"
-echo "  - Edit URLs: nano $USER_HOME/kiosk.url"
-echo "  - Set rotation interval: Add '# N' as first line (N = minutes)"
-echo "  - View logs: tail -f /tmp/kiosk.log"
-echo "  - Restart: sudo pkill X"
-echo "  - Reboot to start: sudo reboot"
-echo ""
-echo "Example URL file format:"
-echo "  # 5                          ← Rotate every 5 minutes (optional)"
-echo "  https://youtube.com/live/... ← URLs, one per line"
-echo ""
-echo "The kiosk will start automatically on next boot or login to tty1"
+echo "Next steps:"
+echo "  1. Reboot to start the kiosk: sudo reboot"
+echo "  2. Edit URLs: nano $USER_HOME/kiosk.url"
+echo "  3. View logs: tail -f /tmp/kiosk.log"
+echo "  4. Restart kiosk: sudo systemctl restart kiosk.service"
 echo ""
