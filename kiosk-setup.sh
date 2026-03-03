@@ -128,6 +128,29 @@ sed "s|USERNAME|$USERNAME|g" "$SCRIPT_DIR/kiosk-monitor.service" \
 echo "  Installed: kiosk-monitor.service (not enabled)"
 echo ""
 
+# ─── Install Xorg Configuration ───────────────────────────────────────────
+
+echo "Installing Xorg configuration..."
+sudo mkdir -p /etc/X11/xorg.conf.d
+sudo tee /etc/X11/xorg.conf.d/99-vc4.conf > /dev/null << 'EOF'
+Section "ServerFlags"
+    Option "AutoAddGPU" "false"
+EndSection
+
+Section "Device"
+    Identifier "vc4-gpu"
+    Driver "modesetting"
+    Option "kmsdev" "/dev/dri/card1"
+EndSection
+
+Section "Screen"
+    Identifier "default-screen"
+    Device "vc4-gpu"
+EndSection
+EOF
+echo "  Created: /etc/X11/xorg.conf.d/99-vc4.conf"
+echo ""
+
 # ─── Configure Autologin ───────────────────────────────────────────────────
 
 echo "Configuring autologin on tty1..."
