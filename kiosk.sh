@@ -11,7 +11,9 @@ LOG_FILE="/tmp/kiosk.log"
 MAX_LOG_SIZE=1048576  # 1 MB
 HIGHLIGHT_SCREENSHOT="/tmp/kiosk_highlight.png"
 HIGHLIGHT_CHECK_INTERVAL=15
+HIGHLIGHT_WINDOW_SECONDS=60
 HIGHLIGHT_DETECTED_FLAG="/tmp/kiosk_highlight_detected"
+URL_STARTED_FLAG="/tmp/kiosk_url_started"
 SKIP_PATTERNS="HIGHLIGHT|Stream\s+currently\s+offline|slight\s+connectivity\s+interruption"
 CHECK_INTERVAL=2
 
@@ -72,6 +74,7 @@ rotate_to_next() {
 	SHUFFLE_POS=$((SHUFFLE_POS + 1))
 	log_message "${reason}: $CURRENT_URL (shuffle ${SHUFFLE_POS}/${#SHUFFLE[@]})"
 	mpv_command "loadfile \"$CURRENT_URL\" replace" > /dev/null
+	touch "$URL_STARTED_FLAG"
 	ELAPSED=0
 }
 
@@ -81,6 +84,12 @@ highlight_monitor() {
 	local proc="${HIGHLIGHT_SCREENSHOT%.png}_proc.png"
 	while true; do
 		sleep "$HIGHLIGHT_CHECK_INTERVAL"
+		# Only OCR within the detection window after a URL loads.
+		if [ ! -f "$URL_STARTED_FLAG" ]; then continue; fi
+		local started_at now
+		started_at=$(stat -f%m "$URL_STARTED_FLAG" 2>/dev/null || stat -c%Y "$URL_STARTED_FLAG" 2>/dev/null)
+		now=$(date +%s)
+		if [ $((now - started_at)) -gt "$HIGHLIGHT_WINDOW_SECONDS" ]; then continue; fi
 		rm -f "$HIGHLIGHT_SCREENSHOT"
 		mpv_command '{"command": ["screenshot-to-file", "'"$HIGHLIGHT_SCREENSHOT"'", "video"]}' > /dev/null
 		sleep 1
@@ -102,7 +111,7 @@ cleanup() {
 	log_message "Shutting down kiosk"
 	[ -n "$HIGHLIGHT_PID" ] && kill "$HIGHLIGHT_PID" 2>/dev/null && wait "$HIGHLIGHT_PID" 2>/dev/null
 	[ -n "$MPV_PID" ] && kill "$MPV_PID" 2>/dev/null && wait "$MPV_PID" 2>/dev/null
-	rm -f "$MPV_SOCKET" "$HIGHLIGHT_SCREENSHOT" "$HIGHLIGHT_DETECTED_FLAG"
+	rm -f "$MPV_SOCKET" "$HIGHLIGHT_SCREENSHOT" "$HIGHLIGHT_DETECTED_FLAG" "$URL_STARTED_FLAG"
 	exit 0
 }
 
