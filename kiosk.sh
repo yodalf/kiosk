@@ -12,7 +12,7 @@ MAX_LOG_SIZE=1048576  # 1 MB
 HIGHLIGHT_SCREENSHOT="/tmp/kiosk_highlight.png"
 HIGHLIGHT_CHECK_INTERVAL=15
 HIGHLIGHT_DETECTED_FLAG="/tmp/kiosk_highlight_detected"
-SKIP_PATTERNS="HIGHLIGHT"
+SKIP_PATTERNS="HIGHLIGHT|Stream\s+currently\s+offline"
 CHECK_INTERVAL=2
 
 # In-memory shuffle state

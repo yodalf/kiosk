@@ -20,7 +20,8 @@ by systemd so it starts on boot and restarts on failure.
   alive between videos — it never exits, it just loads a new file.
 - When the playlist file changes on disk, `kiosk.sh` notices and re-shuffles.
 - An optional OCR pass ("highlight monitor") periodically screenshots the video
-  and skips to the next URL if the word `HIGHLIGHT` appears on screen.
+  and skips to the next URL if a skip pattern (e.g. `HIGHLIGHT` or
+  `Stream currently offline`) appears on screen.
 
 ## 2. Boot flow
 
@@ -155,7 +156,7 @@ preprocess with ffmpeg          (4× upscale, grayscale, threshold at 180)
 OCR with tesseract              (--psm 11: sparse text)
     │
     ▼
-grep for SKIP_PATTERNS          (currently just "HIGHLIGHT")
+grep for SKIP_PATTERNS          ("HIGHLIGHT", "Stream currently offline", …)
     │
     ▼
 if match: touch the flag file   (/tmp/kiosk_highlight_detected)
@@ -190,7 +191,7 @@ Everything configurable lives at the top of `kiosk.sh` as shell variables:
 | `LOG_FILE` | `/tmp/kiosk.log` | Log file |
 | `MAX_LOG_SIZE` | 1 MB | Rotation threshold |
 | `HIGHLIGHT_CHECK_INTERVAL` | 15 s | OCR frequency |
-| `SKIP_PATTERNS` | `HIGHLIGHT` | Regex fed to `grep -oiE` |
+| `SKIP_PATTERNS` | `HIGHLIGHT\|Stream\s+currently\s+offline` | Regex fed to `grep -oiE` |
 | `CHECK_INTERVAL` | 2 s | Main loop tick |
 
 The rotation interval itself is read from the first line of `URL_FILE` at
