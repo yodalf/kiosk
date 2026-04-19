@@ -33,7 +33,7 @@ echo ""
 
 echo "Installing required packages..."
 sudo apt-get update -qq
-sudo apt-get install -y unclutter socat mpv yt-dlp xorg xinit
+sudo apt-get install -y unclutter socat mpv yt-dlp xorg xinit tesseract-ocr
 echo ""
 
 # ─── Copy Scripts ───────────────────────────────────────────────────────────

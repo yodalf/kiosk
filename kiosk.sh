@@ -12,6 +12,10 @@ LOG_FILE="/tmp/kiosk.log"
 MAX_LOG_SIZE=1048576  # 1 MB in bytes
 SHUFFLE_FILE="/tmp/kiosk_shuffle.txt"
 SHUFFLE_INDEX_FILE="/tmp/kiosk_shuffle_index.txt"
+HIGHLIGHT_SCREENSHOT="/tmp/kiosk_highlight.png"
+HIGHLIGHT_CHECK_INTERVAL=30
+HIGHLIGHT_DETECTED_FLAG="/tmp/kiosk_highlight_detected"
+SKIP_PATTERNS="HIGHLIGHT"
 
 # Function to rotate log file if it exceeds max size
 rotate_log_if_needed() {
@@ -142,6 +146,36 @@ mpv_command() {
 	echo "$cmd" | socat - "$MPV_SOCKET" 2>/dev/null > /dev/null
 }
 
+# Background loop: take screenshot via mpv, run OCR, flag if "HIGHLIGHT" found
+highlight_monitor() {
+	log_message "$(date '+%Y-%m-%d %H:%M:%S') - Highlight monitor started (checking every ${HIGHLIGHT_CHECK_INTERVAL}s)"
+	while true; do
+		sleep "$HIGHLIGHT_CHECK_INTERVAL"
+
+		rm -f "$HIGHLIGHT_SCREENSHOT"
+		echo '{"command": ["screenshot-to-file", "'"$HIGHLIGHT_SCREENSHOT"'", "video"]}' \
+			| socat - "$MPV_SOCKET" 2>/dev/null > /dev/null
+
+		sleep 1
+
+		if [ ! -f "$HIGHLIGHT_SCREENSHOT" ]; then
+			continue
+		fi
+
+		ffmpeg -y -i "$HIGHLIGHT_SCREENSHOT" -vf "scale=iw*4:ih*4,format=gray,lutyuv=y=if(gt(val\,180)\,255\,0)" "${HIGHLIGHT_SCREENSHOT%.png}_proc.png" 2>/dev/null
+		ocr_text=$(tesseract "${HIGHLIGHT_SCREENSHOT%.png}_proc.png" stdout --psm 11 2>/dev/null)
+		rm -f "${HIGHLIGHT_SCREENSHOT%.png}_proc.png"
+
+		matched=$(echo "$ocr_text" | grep -oiE "$SKIP_PATTERNS" | head -1)
+		if [ -n "$matched" ]; then
+			log_message "$(date '+%Y-%m-%d %H:%M:%S') - Skip pattern detected: $matched"
+			touch "$HIGHLIGHT_DETECTED_FLAG"
+		fi
+
+		rm -f "$HIGHLIGHT_SCREENSHOT"
+	done
+}
+
 # Function to load a URL in mpv
 load_url() {
 	local url="$1"
@@ -153,6 +187,10 @@ load_url() {
 # Cleanup function
 cleanup() {
 	log_message "$(date '+%Y-%m-%d %H:%M:%S') - Shutting down kiosk"
+	if [ -n "$HIGHLIGHT_PID" ]; then
+		kill $HIGHLIGHT_PID 2>/dev/null
+		wait $HIGHLIGHT_PID 2>/dev/null
+	fi
 	if [ -n "$MPV_PID" ]; then
 		kill $MPV_PID 2>/dev/null
 		wait $MPV_PID 2>/dev/null
@@ -160,6 +198,8 @@ cleanup() {
 	rm -f "$MPV_SOCKET"
 	rm -f "$SHUFFLE_FILE"
 	rm -f "$SHUFFLE_INDEX_FILE"
+	rm -f "$HIGHLIGHT_SCREENSHOT"
+	rm -f "$HIGHLIGHT_DETECTED_FLAG"
 	exit 0
 }
 
@@ -199,6 +239,11 @@ fi
 
 echo "mpv started successfully"
 
+# Start highlight detection in the background
+rm -f "$HIGHLIGHT_DETECTED_FLAG"
+highlight_monitor &
+HIGHLIGHT_PID=$!
+
 # Initialize shuffle and get first URL
 URL_COUNT=$(count_urls)
 ROTATION_MINUTES=$(read_rotation_interval)
@@ -223,6 +268,17 @@ while true; do
 		exit 1
 	fi
 
+	# Check if mpv is idle (failed to load URL) — skip to next
+	idle_status=$(echo '{"command": ["get_property", "idle-active"]}' | socat - "$MPV_SOCKET" 2>/dev/null)
+	if echo "$idle_status" | grep -q '"data":true'; then
+		log_message "$(date '+%Y-%m-%d %H:%M:%S') - mpv is idle (URL failed to load), skipping to next"
+		CURRENT_URL=$(get_next_url)
+		load_url "$CURRENT_URL"
+		ELAPSED=0
+		sleep 5
+		continue
+	fi
+
 	# Check if the URL file has changed (different number of URLs or rotation interval)
 	NEW_URL_COUNT=$(count_urls)
 	NEW_ROTATION_MINUTES=$(read_rotation_interval)
@@ -243,6 +299,15 @@ while true; do
 		log_message "$(date '+%Y-%m-%d %H:%M:%S') - Switching to next URL: $CURRENT_URL"
 		load_url "$CURRENT_URL"
 		ELAPSED=0  # Reset timer after manual switch
+	fi
+
+	# Check if highlight was detected — switch immediately
+	if [ -f "$HIGHLIGHT_DETECTED_FLAG" ]; then
+		rm -f "$HIGHLIGHT_DETECTED_FLAG"
+		CURRENT_URL=$(get_next_url)
+		log_message "$(date '+%Y-%m-%d %H:%M:%S') - Switching due to HIGHLIGHT detection: $CURRENT_URL"
+		load_url "$CURRENT_URL"
+		ELAPSED=0
 	fi
 
 	# If multiple URLs, rotate based on configured interval
