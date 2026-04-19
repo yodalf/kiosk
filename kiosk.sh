@@ -13,7 +13,7 @@ MAX_LOG_SIZE=1048576  # 1 MB in bytes
 SHUFFLE_FILE="/tmp/kiosk_shuffle.txt"
 SHUFFLE_INDEX_FILE="/tmp/kiosk_shuffle_index.txt"
 HIGHLIGHT_SCREENSHOT="/tmp/kiosk_highlight.png"
-HIGHLIGHT_CHECK_INTERVAL=30
+HIGHLIGHT_CHECK_INTERVAL=15
 HIGHLIGHT_DETECTED_FLAG="/tmp/kiosk_highlight_detected"
 SKIP_PATTERNS="HIGHLIGHT"
 
