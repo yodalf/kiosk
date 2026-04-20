@@ -10,9 +10,8 @@ MPV_SOCKET="/tmp/mpvsocket"
 LOG_FILE="/tmp/kiosk.log"
 MAX_LOG_SIZE=1048576  # 1 MB
 HIGHLIGHT_SCREENSHOT="/tmp/kiosk_highlight.png"
-HIGHLIGHT_FAST_INTERVAL=15
-HIGHLIGHT_SLOW_INTERVAL=60
-HIGHLIGHT_FAST_WINDOW=60
+HIGHLIGHT_INTERVAL=60
+HIGHLIGHT_INITIAL_DELAY=5
 HIGHLIGHT_DETECTED_FLAG="/tmp/kiosk_highlight_detected"
 URL_STARTED_FLAG="/tmp/kiosk_url_started"
 SKIP_PATTERNS="HIGHLIGHT|Stream\s+currently\s+offline|slight\s+connectivity\s+interruption"
@@ -58,6 +57,12 @@ read_urls() {
 reshuffle() {
 	mapfile -t SHUFFLE < <(read_urls | shuf)
 	[ ${#SHUFFLE[@]} -eq 0 ] && SHUFFLE=("$DEFAULT_URL")
+	# Avoid replaying the URL we just had — swap with next position if needed.
+	if [ ${#SHUFFLE[@]} -gt 1 ] && [ "${SHUFFLE[0]}" = "$CURRENT_URL" ]; then
+		local tmp="${SHUFFLE[0]}"
+		SHUFFLE[0]="${SHUFFLE[1]}"
+		SHUFFLE[1]="$tmp"
+	fi
 	SHUFFLE_POS=0
 	log_message "Created new shuffle with ${#SHUFFLE[@]} URLs"
 }
@@ -80,18 +85,17 @@ rotate_to_next() {
 }
 
 # Background loop: screenshot via mpv, OCR it, flag if a skip pattern appears.
-# Starts OCR only once mpv confirms playback (playback-time becomes non-null).
-# Cadence: every 15s for the first 60s of playback, then every 60s thereafter.
+# Waits for mpv to confirm playback, then OCRs once ${HIGHLIGHT_INITIAL_DELAY}s
+# after start, and every ${HIGHLIGHT_INTERVAL}s thereafter.
 highlight_monitor() {
-	log_message "Highlight monitor started (${HIGHLIGHT_FAST_INTERVAL}s for first ${HIGHLIGHT_FAST_WINDOW}s, then ${HIGHLIGHT_SLOW_INTERVAL}s)"
+	log_message "Highlight monitor started (first check ${HIGHLIGHT_INITIAL_DELAY}s after playback, then every ${HIGHLIGHT_INTERVAL}s)"
 	local proc="${HIGHLIGHT_SCREENSHOT%.png}_proc.png"
-	local cadence="$HIGHLIGHT_FAST_INTERVAL"
+	local attempt=0
+	local last_started_at=0
 	while true; do
-		sleep "$cadence"
-
-		# Only OCR once mpv has actually started producing frames.
+		# Wait for mpv to be playing.
 		if ! mpv_command '{"command": ["get_property", "playback-time"]}' | grep -qE '"data":[0-9]'; then
-			cadence="$HIGHLIGHT_FAST_INTERVAL"
+			sleep 2
 			continue
 		fi
 
@@ -100,13 +104,19 @@ highlight_monitor() {
 
 		local started_at now age
 		started_at=$(stat -f%m "$URL_STARTED_FLAG" 2>/dev/null || stat -c%Y "$URL_STARTED_FLAG" 2>/dev/null)
+
+		# New URL → wait the initial delay; otherwise wait the steady-state interval.
+		if [ "$started_at" != "$last_started_at" ]; then
+			attempt=0
+			last_started_at=$started_at
+			sleep "$HIGHLIGHT_INITIAL_DELAY"
+		else
+			sleep "$HIGHLIGHT_INTERVAL"
+		fi
+		attempt=$((attempt + 1))
+
 		now=$(date +%s)
 		age=$((now - started_at))
-		if [ "$age" -ge "$HIGHLIGHT_FAST_WINDOW" ]; then
-			cadence="$HIGHLIGHT_SLOW_INTERVAL"
-		else
-			cadence="$HIGHLIGHT_FAST_INTERVAL"
-		fi
 
 		rm -f "$HIGHLIGHT_SCREENSHOT"
 		mpv_command '{"command": ["screenshot-to-file", "'"$HIGHLIGHT_SCREENSHOT"'", "video"]}' > /dev/null
@@ -118,8 +128,8 @@ highlight_monitor() {
 		ocr=$(tesseract "$proc" stdout --psm 11 2>/dev/null)
 		rm -f "$proc" "$HIGHLIGHT_SCREENSHOT"
 		matched=$(echo "$ocr" | grep -oiE "$SKIP_PATTERNS" | head -1)
+		log_message "OCR attempt=$attempt age=${age}s matched=${matched:-none}"
 		if [ -n "$matched" ]; then
-			log_message "Skip pattern detected: $matched"
 			touch "$HIGHLIGHT_DETECTED_FLAG"
 		fi
 	done
