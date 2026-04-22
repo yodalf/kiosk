@@ -16,10 +16,15 @@ HIGHLIGHT_DETECTED_FLAG="/tmp/kiosk_highlight_detected"
 URL_STARTED_FLAG="/tmp/kiosk_url_started"
 SKIP_PATTERNS="HIGHLIGHT|Stream\s+currently\s+offline|slight\s+connectivity\s+interruption"
 CHECK_INTERVAL=2
+STUCK_THRESHOLD=8  # consecutive frozen time-pos reads before rotating (~16s at CHECK_INTERVAL=2)
 
 # In-memory shuffle state
 SHUFFLE=()
 SHUFFLE_POS=0
+
+# Stuck-playback detection state
+LAST_TIME_POS=""
+STUCK_COUNT=0
 
 log_message() {
 	if [ -f "$LOG_FILE" ]; then
@@ -82,6 +87,8 @@ rotate_to_next() {
 	mpv_command "loadfile \"$CURRENT_URL\" replace" > /dev/null
 	rm -f "$URL_STARTED_FLAG"
 	ELAPSED=0
+	LAST_TIME_POS=""
+	STUCK_COUNT=0
 }
 
 # Background loop: screenshot via mpv, OCR it, flag if a skip pattern appears.
@@ -214,6 +221,21 @@ while true; do
 	if [ -f "$HIGHLIGHT_DETECTED_FLAG" ]; then
 		rm -f "$HIGHLIGHT_DETECTED_FLAG"
 		rotate_to_next "HIGHLIGHT detected"
+	fi
+
+	# Stuck playback: rotate if time-pos hasn't advanced for STUCK_THRESHOLD checks.
+	TIME_POS=$(mpv_command '{"command": ["get_property", "time-pos"]}' | grep -oE '"data":[0-9.]+' | head -1 | cut -d: -f2)
+	if [ -n "$TIME_POS" ]; then
+		if [ "$TIME_POS" = "$LAST_TIME_POS" ]; then
+			STUCK_COUNT=$((STUCK_COUNT + 1))
+			if [ "$STUCK_COUNT" -ge "$STUCK_THRESHOLD" ]; then
+				rotate_to_next "Stuck playback (time-pos frozen at $TIME_POS for $((STUCK_COUNT * CHECK_INTERVAL))s)"
+				continue
+			fi
+		else
+			STUCK_COUNT=0
+			LAST_TIME_POS=$TIME_POS
+		fi
 	fi
 
 	# Timer-based rotation (only if multiple URLs)
