@@ -3,6 +3,10 @@ xset -dpms      # Disable DPMS (Energy Star) features
 xset s off      # Disable screen saver
 xset s noblank  # Don't blank the video device
 unclutter &     # Hide mouse cursor (install with: sudo apt install unclutter)
+# Run X at 1080p even on a 4K display: the streams are 1080p, and GL-upscaling
+# to 4K makes the Pi 5 VO miss vsync (~12 dropped frames/s of constant judder).
+# Let the TV do the upscale instead. No-op if the mode is unavailable.
+xrandr --size 1920x1080 2>/dev/null
 
 # ─── Configuration ─────────────────────────────────────────────────────────
 
