@@ -11,10 +11,12 @@ TTYPath=/dev/tty1
 TTYReset=yes
 TTYVHangup=yes
 StandardInput=tty
-StandardOutput=tty
+StandardOutput=journal
+StandardError=journal
+Environment=XDG_RUNTIME_DIR=/run/user/%U
 ExecStartPre=/bin/sleep 5
 ExecStart=/home/USERNAME/kiosk-with-x.sh
-Restart=on-failure
+Restart=always
 RestartSec=10
 
 [Install]

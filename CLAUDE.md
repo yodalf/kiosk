@@ -60,10 +60,38 @@ within a few seconds — no restart needed.
   then tail `/tmp/kiosk.log` for ~30 s to catch startup, first rotation, and
   highlight monitor output.
 
+## Boot behaviour
+
+On a fresh boot the kiosk normally needs **2–3 start attempts** before X gets
+exclusive VT1 control. This is expected: `Restart=always` + `RestartSec=10`
+handles it automatically. The kiosk is typically playing within ~60 s of boot.
+Do **not** "fix" this by reverting to `Restart=on-failure` — `startx` always
+exits 0 (even on failure), so `on-failure` never fires.
+
+## Key `kiosk.service` design decisions
+
+| Setting | Value | Reason |
+|---------|-------|--------|
+| `Restart` | `always` | `startx` exits 0 even when `kiosk.sh` fails; `on-failure` would never retry |
+| `StandardOutput` | `journal` | Original `tty` kept /dev/tty1 open in the service process while X was trying to take exclusive VT control — race condition on first boot |
+| `StandardError` | `journal` | Same as above; errors now visible via `journalctl -u kiosk.service` |
+| `Environment=XDG_RUNTIME_DIR` | `/run/user/%U` | mpv requires this; the system service environment doesn't set it |
+
+## Debugging startup failures
+
+- **`/tmp/kiosk-startx.log`** — stdout/stderr from `startx` and `kiosk.sh`
+  (X init messages, mpv startup errors, echo lines from the script).
+- **`/tmp/kiosk.log`** — timestamped runtime log from `kiosk.sh` (rotations,
+  OCR results, stuck-playback events).
+- **`journalctl -b -u kiosk.service`** — systemd-level events (start/stop/restart cycles, mpv stderr).
+- **`~/.local/share/xorg/Xorg.0.log`** — full X server log.
+
 ## When modifying `kiosk-setup.sh`
 
 - Must remain idempotent — re-running on an already-set-up Pi must be safe.
 - Must not run as root; it uses `sudo` only for system-level bits.
+- Required packages: `unclutter socat mpv yt-dlp xorg xinit tesseract-ocr ffmpeg`
+  (`ffmpeg` is used by `kiosk.sh` to preprocess screenshots before OCR).
 - If changing installed packages, update `apt-get install` and mention in
   ARCHITECTURE.md's platform notes.
 

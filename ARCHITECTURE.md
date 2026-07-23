@@ -50,14 +50,16 @@ by systemd so it starts on boot and restarts on failure.
 A few notes on this chain:
 
 - **`kiosk.service`** is the systemd unit. It uses `Conflicts=getty@tty1.service`
-  so the login prompt doesn't fight for tty1, and `Restart=on-failure` so a crash
-  recovers automatically. See `kiosk.service` in the repo.
+  so the login prompt doesn't fight for tty1, and `Restart=always` so a crash
+  recovers automatically (`always`, not `on-failure`, because `startx` exits 0
+  even when `kiosk.sh` fails). On a fresh boot, 2–3 restart attempts before X
+  wins exclusive VT1 control are normal. See `kiosk.service` in the repo.
 - **`kiosk-with-x.sh`** exists because `startx` must be invoked by a real user,
-  not as root. The setup script generates it with `$USER` hardcoded so systemd
-  can `ExecStart` it directly.
+  not as root. The setup script substitutes `USERNAME` and installs it in
+  `$HOME` so systemd can `ExecStart` it directly.
 - **`kiosk-monitor.service`** is a separate watchdog (installed but disabled by
   default) that kicks `getty@tty1` if the X process dies — a belt-and-suspenders
-  backup for `kiosk.service`'s own `Restart=on-failure`.
+  backup for `kiosk.service`'s own `Restart=always`.
 
 ## 3. Components
 
@@ -74,8 +76,8 @@ A few notes on this chain:
 
 ## 4. `kiosk.sh` runtime
 
-This is where the interesting logic lives. The script is ~190 lines of bash and
-does four things concurrently:
+This is where the interesting logic lives. The script is a couple hundred lines
+of bash and does four things concurrently:
 
 1. Runs `mpv` in the background with an IPC socket.
 2. Runs a **highlight monitor** in the background.
@@ -94,14 +96,18 @@ mpv_command() {
 }
 ```
 
-The two commands used are:
+The commands used are:
 
 - `loadfile "<url>" replace` — play this URL, discarding any current one. This
   is what gives seamless transitions: `mpv` downloads and buffers the next
   stream while still rendering the current one, then swaps in place.
-- `{"command": ["get_property", "idle-active"]}` — JSON form, returns whether
-  `mpv` is currently showing nothing (i.e. the last `loadfile` failed). Used
-  to auto-skip broken URLs.
+- Property queries, wrapped by the `mpv_get <property>` helper, which sends the
+  JSON `get_property` command and extracts the bare value from the response:
+  - `idle-active` — is `mpv` showing nothing (the last `loadfile` failed)?
+    Used to auto-skip broken URLs.
+  - `time-pos` — playback position, used for stuck-playback detection.
+  - `playback-time` — used by the highlight monitor to wait for playback.
+- `screenshot-to-file` — grabs a frame for the highlight monitor's OCR pass.
 
 ### 4.2 Shuffle state
 
@@ -133,18 +139,22 @@ The loop ticks every `CHECK_INTERVAL=2` seconds and checks, in order:
 1. **Is `mpv` still running?** If not, exit so systemd restarts us.
 2. **Is `mpv` idle?** (URL failed to load.) If yes, `rotate_to_next` and wait 5s
    before the next tick to avoid hammering a bad playlist.
-3. **Did the URL file change on disk?** Compared as sorted sets so any edit
-   (add, remove, swap) is detected. If yes, `rotate_to_next`.
-4. **Did the rotation interval change** (first line of the URL file)? If yes,
-   log the change and `rotate_to_next`.
-5. **Did the highlight monitor raise a flag?** If yes, clear the flag and
+3. **Did the rotation interval change** (first line of the URL file) **or the
+   URL list itself?** The list is compared as sorted sets (via the
+   `playlist_changed` helper) so any edit — add, remove, replace — is detected.
+   If either changed, log it and `rotate_to_next`.
+4. **Did the highlight monitor raise a flag?** If yes, clear the flag and
    `rotate_to_next`.
+5. **Is playback stuck?** If `time-pos` hasn't advanced for
+   `STUCK_THRESHOLD=8` consecutive checks (~16 s), `rotate_to_next`.
 6. **Has `ELAPSED` reached the rotation interval?** If yes, `rotate_to_next`.
 7. Sleep `CHECK_INTERVAL`, increment `ELAPSED` (only if >1 URL).
 
 ### 4.4 Highlight monitor
 
-A background loop that runs every `HIGHLIGHT_CHECK_INTERVAL=15` seconds:
+A background loop. After each rotation it waits for `mpv` to confirm playback,
+runs a first check `HIGHLIGHT_INITIAL_DELAY=5` seconds later, then repeats
+every `HIGHLIGHT_INTERVAL=60` seconds. Each check:
 
 ```
 ask mpv to screenshot          (screenshot-to-file)
@@ -190,9 +200,11 @@ Everything configurable lives at the top of `kiosk.sh` as shell variables:
 | `MPV_SOCKET` | `/tmp/mpvsocket` | mpv IPC endpoint |
 | `LOG_FILE` | `/tmp/kiosk.log` | Log file |
 | `MAX_LOG_SIZE` | 1 MB | Rotation threshold |
-| `HIGHLIGHT_CHECK_INTERVAL` | 15 s | OCR frequency |
-| `SKIP_PATTERNS` | `HIGHLIGHT\|Stream\s+currently\s+offline` | Regex fed to `grep -oiE` |
+| `HIGHLIGHT_INITIAL_DELAY` | 5 s | Delay before the first OCR check of a new URL |
+| `HIGHLIGHT_INTERVAL` | 60 s | Steady-state OCR frequency |
+| `SKIP_PATTERNS` | `HIGHLIGHT`, `Stream currently offline`, … | Regex fed to `grep -oiE` |
 | `CHECK_INTERVAL` | 2 s | Main loop tick |
+| `STUCK_THRESHOLD` | 8 checks (~16 s) | Frozen `time-pos` reads before rotating |
 
 The rotation interval itself is read from the first line of `URL_FILE` at
 runtime (e.g. `# 5` = 5 minutes) so it can change without restarting.

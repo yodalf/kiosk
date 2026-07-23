@@ -38,13 +38,15 @@ https://www.youtube.com/live/yyyyy
 
 Changes take effect within a few seconds — no restart needed.
 
-To switch between bundled playlists (`africa.url`, `world.url`, …):
+To switch between bundled playlists (`nature.url`, `world.url`, …):
 
 ```bash
 rm ~/kiosk.url
-ln -s ~/africa.url ~/kiosk.url
-sudo systemctl restart kiosk.service
+ln -s ~/nature.url ~/kiosk.url
 ```
+
+The running kiosk picks up the new playlist within a few seconds — no restart
+needed.
 
 ## Manage
 

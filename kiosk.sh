@@ -4,6 +4,8 @@ xset s off      # Disable screen saver
 xset s noblank  # Don't blank the video device
 unclutter &     # Hide mouse cursor (install with: sudo apt install unclutter)
 
+# ─── Configuration ─────────────────────────────────────────────────────────
+
 URL_FILE="$(dirname "$0")/kiosk.url"
 DEFAULT_URL="https://www.youtube.com/watch?v=AeMUdOPFcXI"
 MPV_SOCKET="/tmp/mpvsocket"
@@ -26,6 +28,8 @@ SHUFFLE_POS=0
 LAST_TIME_POS=""
 STUCK_COUNT=0
 
+# ─── Helpers ───────────────────────────────────────────────────────────────
+
 log_message() {
 	if [ -f "$LOG_FILE" ]; then
 		local size
@@ -39,6 +43,13 @@ log_message() {
 
 mpv_command() {
 	echo "$1" | socat - "$MPV_SOCKET" 2>/dev/null
+}
+
+# Query an mpv property over IPC. Prints the bare value (e.g. "12.3", "true"),
+# or nothing if mpv is unreachable or the property is unavailable.
+mpv_get() {
+	mpv_command '{"command": ["get_property", "'"$1"'"]}' \
+		| grep -oE '"data":[a-zA-Z0-9.-]+' | head -1 | cut -d: -f2
 }
 
 read_rotation_interval() {
@@ -59,6 +70,12 @@ read_urls() {
 	fi
 }
 
+# True when the on-disk URL list differs from the cached shuffle (any edit —
+# add, remove, replace — compared as sorted sets).
+playlist_changed() {
+	[ "$(read_urls | sort)" != "$(printf '%s\n' "${SHUFFLE[@]}" | sort)" ]
+}
+
 reshuffle() {
 	mapfile -t SHUFFLE < <(read_urls | shuf)
 	[ ${#SHUFFLE[@]} -eq 0 ] && SHUFFLE=("$DEFAULT_URL")
@@ -75,10 +92,7 @@ reshuffle() {
 # Pick next URL (reshuffling as needed), load it, and reset the rotation timer.
 rotate_to_next() {
 	local reason="${1:-Rotating}"
-	local current cached
-	current=$(read_urls | sort)
-	cached=$(printf '%s\n' "${SHUFFLE[@]}" | sort)
-	if [ "$current" != "$cached" ] || [ "$SHUFFLE_POS" -ge "${#SHUFFLE[@]}" ]; then
+	if playlist_changed || [ "$SHUFFLE_POS" -ge "${#SHUFFLE[@]}" ]; then
 		reshuffle
 	fi
 	CURRENT_URL="${SHUFFLE[$SHUFFLE_POS]}"
@@ -91,6 +105,8 @@ rotate_to_next() {
 	STUCK_COUNT=0
 }
 
+# ─── Highlight monitor (background) ────────────────────────────────────────
+
 # Background loop: screenshot via mpv, OCR it, flag if a skip pattern appears.
 # Waits for mpv to confirm playback, then OCRs once ${HIGHLIGHT_INITIAL_DELAY}s
 # after start, and every ${HIGHLIGHT_INTERVAL}s thereafter.
@@ -101,7 +117,7 @@ highlight_monitor() {
 	local last_started_at=0
 	while true; do
 		# Wait for mpv to be playing.
-		if ! mpv_command '{"command": ["get_property", "playback-time"]}' | grep -qE '"data":[0-9]'; then
+		if ! [[ "$(mpv_get playback-time)" =~ ^[0-9] ]]; then
 			sleep 2
 			continue
 		fi
@@ -152,6 +168,8 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM EXIT
 
+# ─── Startup ───────────────────────────────────────────────────────────────
+
 echo "Starting mpv in kiosk mode with IPC..."
 mpv --idle \
 	--force-window \
@@ -187,6 +205,8 @@ ROTATION_INTERVAL=$((ROTATION_MINUTES * 60))
 rotate_to_next "Starting kiosk"
 echo "Starting kiosk with ${#SHUFFLE[@]} URLs, rotation every ${ROTATION_MINUTES} minute(s)"
 
+# ─── Main loop ─────────────────────────────────────────────────────────────
+
 ELAPSED=0
 log_message "Entering main monitoring loop"
 while true; do
@@ -196,7 +216,7 @@ while true; do
 	fi
 
 	# mpv went idle (URL failed to load) -> skip
-	if mpv_command '{"command": ["get_property", "idle-active"]}' | grep -q '"data":true'; then
+	if [ "$(mpv_get idle-active)" = "true" ]; then
 		rotate_to_next "mpv idle, skipping"
 		sleep 5
 		continue
@@ -204,18 +224,18 @@ while true; do
 
 	# URL list or rotation interval changed on disk -> rotate now
 	NEW_MINUTES=$(read_rotation_interval)
-	NEW_INTERVAL=$((NEW_MINUTES * 60))
-	current_sorted=$(read_urls | sort)
-	cached_sorted=$(printf '%s\n' "${SHUFFLE[@]}" | sort)
-	if [ "$current_sorted" != "$cached_sorted" ] || [ "$NEW_INTERVAL" != "$ROTATION_INTERVAL" ]; then
-		[ "$current_sorted" != "$cached_sorted" ] && log_message "URL list changed"
-		if [ "$NEW_INTERVAL" != "$ROTATION_INTERVAL" ]; then
-			log_message "Rotation interval changed (${ROTATION_MINUTES} -> ${NEW_MINUTES} minute(s))"
-			ROTATION_MINUTES=$NEW_MINUTES
-			ROTATION_INTERVAL=$NEW_INTERVAL
-		fi
-		rotate_to_next "Switching after config change"
+	CONFIG_CHANGED=""
+	if [ "$NEW_MINUTES" != "$ROTATION_MINUTES" ]; then
+		log_message "Rotation interval changed (${ROTATION_MINUTES} -> ${NEW_MINUTES} minute(s))"
+		ROTATION_MINUTES=$NEW_MINUTES
+		ROTATION_INTERVAL=$((NEW_MINUTES * 60))
+		CONFIG_CHANGED=1
 	fi
+	if playlist_changed; then
+		log_message "URL list changed"
+		CONFIG_CHANGED=1
+	fi
+	[ -n "$CONFIG_CHANGED" ] && rotate_to_next "Switching after config change"
 
 	# Highlight detected -> switch immediately
 	if [ -f "$HIGHLIGHT_DETECTED_FLAG" ]; then
@@ -224,8 +244,8 @@ while true; do
 	fi
 
 	# Stuck playback: rotate if time-pos hasn't advanced for STUCK_THRESHOLD checks.
-	TIME_POS=$(mpv_command '{"command": ["get_property", "time-pos"]}' | grep -oE '"data":[0-9.]+' | head -1 | cut -d: -f2)
-	if [ -n "$TIME_POS" ]; then
+	TIME_POS=$(mpv_get time-pos)
+	if [[ "$TIME_POS" =~ ^[0-9] ]]; then
 		if [ "$TIME_POS" = "$LAST_TIME_POS" ]; then
 			STUCK_COUNT=$((STUCK_COUNT + 1))
 			if [ "$STUCK_COUNT" -ge "$STUCK_THRESHOLD" ]; then

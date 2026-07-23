@@ -33,7 +33,7 @@ echo ""
 
 echo "Installing required packages..."
 sudo apt-get update -qq
-sudo apt-get install -y unclutter socat mpv yt-dlp xorg xinit tesseract-ocr
+sudo apt-get install -y unclutter socat mpv yt-dlp xorg xinit tesseract-ocr ffmpeg
 echo ""
 
 # ─── Copy Scripts ───────────────────────────────────────────────────────────
@@ -63,10 +63,7 @@ echo ""
 # ─── Generate kiosk-with-x.sh ──────────────────────────────────────────────
 
 echo "Generating kiosk-with-x.sh..."
-cat > "$USER_HOME/kiosk-with-x.sh" << EOF
-#!/bin/bash
-startx /home/$USERNAME/kiosk.sh -- :0 vt1
-EOF
+sed "s|USERNAME|$USERNAME|g" "$SCRIPT_DIR/kiosk-with-x.sh" > "$USER_HOME/kiosk-with-x.sh"
 chmod +x "$USER_HOME/kiosk-with-x.sh"
 echo "  Created: $USER_HOME/kiosk-with-x.sh"
 echo ""
@@ -147,27 +144,6 @@ ExecStart=-/sbin/agetty --autologin $USERNAME --noclear %I \$TERM
 Type=idle
 EOF
 echo "  Created: autologin.conf"
-echo ""
-
-# ─── Configure .bash_profile Fallback ───────────────────────────────────────
-
-KIOSK_MARKER="# Auto-start X with kiosk on tty1"
-BASH_PROFILE="$USER_HOME/.bash_profile"
-
-if grep -q "$KIOSK_MARKER" "$BASH_PROFILE" 2>/dev/null; then
-    echo ".bash_profile already configured, skipping."
-else
-    echo "Adding fallback block to .bash_profile..."
-    cat >> "$BASH_PROFILE" << EOF
-
-$KIOSK_MARKER
-if [ -z "\$DISPLAY" ] && [ \$(tty) = /dev/tty1 ]; then
-    #startx /home/$USERNAME/kiosk.sh
-    true
-fi
-EOF
-    echo "  Updated: .bash_profile"
-fi
 echo ""
 
 # ─── Enable Services ───────────────────────────────────────────────────────
