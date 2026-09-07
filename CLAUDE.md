@@ -47,6 +47,19 @@ sshpass -p 'toto' ssh  -o StrictHostKeyChecking=no realo@192.168.2.10 'sudo syst
 For URL files (`*.url`), the running kiosk auto-detects edits to `~/kiosk.url`
 within a few seconds — no restart needed.
 
+The same Pi also hosts two things that are not part of this repo but that
+`wifi-watchdog.sh` and any network change must respect:
+
+- **Pi-hole v6** (bare metal, `pihole-FTL` owns ports 53/80/443). Its only
+  upstream is `127.0.0.1#5335`, a local `unbound` that forwards to Quad9 over
+  DNS-over-TLS (`/etc/unbound/unbound.conf.d/quad9-dot.conf`). Listening mode
+  is `ALL` so tailnet clients are answered.
+- **Tailscale** joined to the Headscale server at `hs.realo.ca` as node
+  `kiosk`, tailnet IP `100.64.0.5`, started with `--accept-dns=false`. The
+  whole tailnet uses this Pi-hole as its resolver, so an outage of the Pi
+  takes tailnet DNS with it. The Pi is also reachable at
+  `realo@100.64.0.5` from any tailnet device.
+
 ## When modifying `kiosk.sh`
 
 - Bash 5+ is available on the target (uses `mapfile`, `shuf`, bash regex).
