@@ -60,6 +60,15 @@ A few notes on this chain:
 - **`kiosk-monitor.service`** is a separate watchdog (installed but disabled by
   default) that kicks `getty@tty1` if the X process dies — a belt-and-suspenders
   backup for `kiosk.service`'s own `Restart=always`.
+- **`wifi-watchdog.timer`** runs `wifi-watchdog.sh` every minute as root. The
+  Pi is on Wi-Fi and the link has failed in two ways: the access point
+  refusing association, and the brcmfmac firmware silently ceasing to receive
+  broadcasts (the Pi keeps streaming but nobody on the LAN can reach it). The
+  script checks NetworkManager state, pings the gateway, and sniffs for other
+  hosts' ARP/mDNS broadcasts for up to 40 s. Three consecutive failures bounce
+  the connection (and tailscaled); six trigger a reboot, guarded by a 10 min
+  minimum uptime and one reboot per hour. `journalctl -t wifi-watchdog` shows
+  its history.
 
 ## 3. Components
 
@@ -70,6 +79,7 @@ A few notes on this chain:
 | `kiosk-with-x.sh` | Generated wrapper that starts X on vt1. |
 | `kiosk.service` | Systemd unit template. `USERNAME` placeholder gets substituted at install. |
 | `kiosk-monitor.sh` + `.service` | Optional watchdog that restarts getty if X dies. |
+| `wifi-watchdog.sh` + `.service` + `.timer` | Link watchdog: bounces Wi-Fi, then reboots, when the wireless link stays broken. |
 | `restart-kiosk.sh` | Convenience wrapper for `systemctl restart kiosk.service`. |
 | `99-vc4.conf` | Xorg config for Raspberry Pi 5's dual-DRM GPU. |
 | `*.url` | Playlists. `kiosk.url` is the active one (often a symlink to another). |

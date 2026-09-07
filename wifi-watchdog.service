@@ -1,0 +1,7 @@
+[Unit]
+Description=Wi-Fi link watchdog - bounce, then reboot, on persistent link failure
+After=network.target NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wifi-watchdog.sh

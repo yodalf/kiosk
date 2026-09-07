@@ -33,7 +33,7 @@ echo ""
 
 echo "Installing required packages..."
 sudo apt-get update -qq
-sudo apt-get install -y unclutter socat mpv yt-dlp xorg xinit tesseract-ocr ffmpeg
+sudo apt-get install -y unclutter socat mpv yt-dlp xorg xinit tesseract-ocr ffmpeg tcpdump jq
 echo ""
 
 # ─── Copy Scripts ───────────────────────────────────────────────────────────
@@ -123,6 +123,11 @@ echo "  Installed: kiosk.service"
 sed "s|USERNAME|$USERNAME|g" "$SCRIPT_DIR/kiosk-monitor.service" \
     | sudo tee /etc/systemd/system/kiosk-monitor.service > /dev/null
 echo "  Installed: kiosk-monitor.service (not enabled)"
+
+sudo install -m 755 "$SCRIPT_DIR/wifi-watchdog.sh" /usr/local/sbin/wifi-watchdog.sh
+sudo cp "$SCRIPT_DIR/wifi-watchdog.service" /etc/systemd/system/wifi-watchdog.service
+sudo cp "$SCRIPT_DIR/wifi-watchdog.timer"   /etc/systemd/system/wifi-watchdog.timer
+echo "  Installed: wifi-watchdog.sh, wifi-watchdog.service, wifi-watchdog.timer"
 echo ""
 
 # ─── Install Xorg Configuration ───────────────────────────────────────────
@@ -151,6 +156,7 @@ echo ""
 echo "Enabling kiosk service..."
 sudo systemctl daemon-reload
 sudo systemctl enable kiosk.service
+sudo systemctl enable --now wifi-watchdog.timer
 echo ""
 
 # ─── Summary ────────────────────────────────────────────────────────────────
@@ -173,6 +179,7 @@ echo ""
 echo "Systemd services:"
 echo "  kiosk.service          (enabled, starts on boot)"
 echo "  kiosk-monitor.service  (installed, not enabled)"
+echo "  wifi-watchdog.timer    (enabled, runs /usr/local/sbin/wifi-watchdog.sh every minute)"
 echo ""
 echo "Next steps:"
 echo "  1. Reboot to start the kiosk: sudo reboot"

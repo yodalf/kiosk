@@ -65,6 +65,9 @@ sudo journalctl -u kiosk.service -f     # system logs
   validate the URLs manually with `yt-dlp <url>`.
 - **Black screen / display issues** — inspect `~/.local/share/xorg/Xorg.0.log`
   for `EE` / `WW` lines.
+- **Pi drops off the network** — the Wi-Fi watchdog bounces the link after
+  3 bad minutes and reboots after 6. See what it did with
+  `journalctl -t wifi-watchdog`.
 
 ## License
 
